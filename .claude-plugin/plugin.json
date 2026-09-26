@@ -1,0 +1,6 @@
+{
+  "name": "plan-drift",
+  "version": "0.1.0",
+  "description": "Checks that the code implemented after a Plan-mode plan matches the plan, using TypeSafe's Jev (System One) model.",
+  "author": { "name": "Kaito Yamada" }
+}

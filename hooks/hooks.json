@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "python \"${CLAUDE_PLUGIN_ROOT}/scripts/plan_drift.py\" inject" }] }
+    ],
+    "PreToolUse": [
+      { "matcher": "ExitPlanMode", "hooks": [{ "type": "command", "command": "python \"${CLAUDE_PLUGIN_ROOT}/scripts/plan_drift.py\" gate" }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "ExitPlanMode", "hooks": [{ "type": "command", "command": "python \"${CLAUDE_PLUGIN_ROOT}/scripts/plan_drift.py\" snapshot" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "python \"${CLAUDE_PLUGIN_ROOT}/scripts/plan_drift.py\" check --hook", "timeout": 60 }] }
+    ]
+  }
+}
