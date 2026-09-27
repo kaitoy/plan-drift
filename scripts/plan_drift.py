@@ -5,7 +5,8 @@ Subcommands (hooks feed the hook JSON on stdin):
   gate      PreToolUse        - deny ExitPlanMode when the plan has no valid plan-checks block
   snapshot  PostToolUse       - save the plan checks and a snapshot of the working tree
   check     /plan-drift:check - diff against the snapshot, ask Jev, print the report
-  check --hook  Stop          - same, but only a one-line systemMessage and only when the diff changed
+  check --hook  Stop          - same, but only a one-line systemMessage and only when the diff changed,
+                and only in the session that owns the plan
   triage REF=CLASS ...        - record Claude's classification of the drift items (from /plan-drift:check)
   stats     /plan-drift:stats - aggregate history.jsonl over all plans into stats.html
 """
@@ -303,6 +304,15 @@ def save(root, data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+def carries_plan(transcript_path, checks):
+    """True when the session was started from the approved plan (ExitPlanMode's "clear context" option)."""
+    if not transcript_path or not checks or not os.path.exists(transcript_path):
+        return False
+    marker = json.dumps(checks[0]["expect"], ensure_ascii=False)[1:-1]  # as it appears inside the JSONL
+    with open(transcript_path, encoding="utf-8", errors="replace") as f:
+        return any(marker in line for line in f)
+
+
 def cmd_check(hook, as_hook):
     root = repo_root(hook.get("cwd") or os.getcwd())
     if not root or not os.path.exists(state_path(root)):
@@ -315,6 +325,11 @@ def cmd_check(hook, as_hook):
         return
     with open(state_path(root), encoding="utf-8") as f:
         data = json.load(f)
+    sid = hook.get("session_id")
+    if as_hook and sid != data.get("session_id"):
+        if not carries_plan(hook.get("transcript_path"), data["checks"]):
+            return  # snapshot belongs to another, finished session
+        data["session_id"] = sid  # plan handed off via "clear context": adopt it
     diff = git(root, "diff", "--no-color", "--no-renames", data["base_tree"], snapshot_tree(root))
     digest = hashlib.sha256(diff.encode()).hexdigest()
     if as_hook and digest == data.get("last_diff_hash"):

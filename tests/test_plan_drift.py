@@ -122,6 +122,35 @@ def test_history_and_stats():
         assert "<svg" in page and "<td>100%</td>" in page and "<b>50%</b>" in page  # plan 1 rate; 2 drift / 4 items
 
 
+def test_stop_hook_only_in_owning_session():
+    import contextlib
+    import io
+    import json
+    with tempfile.TemporaryDirectory() as root:
+        git(root, "init", "-q")
+        write(root, "src/a.py", "x = 1\n")
+        pd.cmd_snapshot({"cwd": root, "session_id": "A", "tool_input": {"plan": PLAN}})
+        write(root, "src/a.py", "x = 2  # retry\n")
+        os.environ["TYPESAFE_API_KEY"] = "test"
+        pd.jev = lambda state, questions: (
+            {"covered_by": {"choice": "C1", "probabilities": {}}} if "covered_by" in questions
+            else {"implemented": {"score": 2.0}, "contradicts": {"noul": 0.0}})
+
+        def stop(transcript):
+            path = os.path.join(root, "transcript.jsonl")
+            write(root, "transcript.jsonl", transcript)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                pd.cmd_check({"cwd": root, "session_id": "B", "transcript_path": path}, True)
+            with open(pd.state_path(root), encoding="utf-8") as f:
+                return out.getvalue(), json.load(f)
+
+        out, data = stop('{"type":"user","message":"unrelated task"}\n')
+        assert out == "" and data["session_id"] == "A" and "last_diff_hash" not in data
+        out, data = stop('{"type":"user","message":"Implement the following plan: ... add retry ..."}\n')
+        assert "plan-drift:" in out and data["session_id"] == "B"
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
