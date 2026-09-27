@@ -114,12 +114,17 @@ def test_history_and_stats():
             assert [len(p["eval"]["checks"]) for p in plans] == [2, 2]
             m = pd.plan_metrics(plans[0])
             assert (m["drift"], m["misjudged"], m["triaged"]) == (2, 1, 2), m
+            assert m["adj_drift"] == 1 and (m["mis_PARTIAL"], m["mis_unplanned"]) == (1, 0), m
+            stale = dict(plans[0], triage={**plans[0]["triage"], "C1": "misjudged"})  # C1 is OK: nothing to subtract
+            assert pd.plan_metrics(stale)["adj_drift"] == 1
             pd.cmd_stats()
         finally:
             os.chdir(cwd)
         with open(os.path.join(root, pd.STATE_DIR, "stats.html"), encoding="utf-8") as f:
             page = f.read()
         assert "<svg" in page and "<td>100%</td>" in page and "<b>50%</b>" in page  # plan 1 rate; 2 drift / 4 items
+        assert "<td>50%</td>" in page and "<b>25%</b>" in page  # plan 1 adjusted; 1 adjusted drift / 4 items
+        assert page.count('class="f-hatch"/>') == 1  # plan 1's misjudged PARTIAL is hatched in the bar chart
 
 
 def test_stop_hook_only_in_owning_session():

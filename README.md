@@ -11,7 +11,7 @@ A Claude Code plugin that uses TypeSafe's System One model [Jev](https://docs.ty
 | After the plan is approved | PostToolUse | Saves the checks and a snapshot of the working tree (a git tree including untracked files) to `.claude/plan-drift/current.json` |
 | End of each response | Stop | If the diff has changed, verifies it with Jev and shows a one-line summary (never blocks) |
 | `/plan-drift:check` | Skill | Shows the full report and saves it to `.claude/plan-drift/report.md`, then Claude classifies each drift item (unintended / intentional / Jev misjudged) and records it with `plan_drift.py triage` |
-| `/plan-drift:stats` | Skill | Aggregates every plan's latest result into `.claude/plan-drift/stats.html`: plan items vs. drift detected, drift rate and Jev misjudged rate per plan, with charts |
+| `/plan-drift:stats` | Skill | Aggregates every plan's latest result into `.claude/plan-drift/stats.html`: plan items vs. drift detected, drift rate, adjusted drift rate and Jev misjudged rate per plan, with charts |
 
 Questions sent to Jev:
 - **Per plan item**: state = `{plan_item, diff of the related files}`. `implemented` (Score 0–2) and `contradicts` (Noul)
@@ -23,6 +23,7 @@ Questions sent to Jev:
 Every verification appends to `.claude/plan-drift/history.jsonl` (one `eval` record per check, one `triage` record per classification). Stats use the latest `eval` of each plan, so the Stop hook's repeated checks are counted once.
 
 - drift = non-OK plan items + unplanned files; drift rate = drift / plan items
+- adjusted drift rate = (drift − drift items classified `misjudged`) / plan items
 - Jev misjudged rate = items classified `misjudged` / classified items
 
 ## plan-checks format

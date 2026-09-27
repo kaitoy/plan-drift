@@ -415,6 +415,13 @@ def plan_metrics(p):
     m.update(checks=len(e["checks"]), unplanned=len(e["unplanned"]), untouched=len(e["untouched"]),
              triaged=sum(m[c] for c in TRIAGE_CLASSES))
     m["drift"] = m["checks"] - m["OK"] + m["unplanned"]
+    # only misjudged items that are still drift in the latest eval, so stale triage can't over-subtract
+    flagged = {i for i, v in e["checks"].items() if v != "OK"} | {"file:" + f for f in e["unplanned"]}
+    mis = [r for r, c in p["triage"].items() if c == "misjudged" and r in flagged]
+    m["adj_drift"] = m["drift"] - len(mis)
+    for k in ("PARTIAL", "MISSING", "CONTRADICTS"):  # misjudged share of each drift bar segment
+        m["mis_" + k] = sum(e["checks"].get(r) == k for r in mis)
+    m["mis_unplanned"] = sum(r.startswith("file:") for r in mis)
     return m
 
 
@@ -430,7 +437,7 @@ def pct(r):
 W, H, PL, PR, PT, PB = 720, 220, 40, 8, 8, 24
 BARS = [("OK", "good"), ("PARTIAL", "warning"), ("MISSING", "serious"), ("CONTRADICTS", "critical"),
         ("unplanned", "unplanned")]
-LINES = [("drift rate", "s1"), ("Jev misjudged rate", "s2")]
+LINES = [("drift rate", "s1"), ("Jev misjudged rate", "s2"), ("adjusted drift rate", "s3")]
 MAX_CHART_PLANS = 50  # ponytail: charts show only the last 50 plans (bars get too thin); paginate if needed
 
 
@@ -457,7 +464,10 @@ def hit(i, step, tip):
 def bar_chart(rows):
     ymax = max(4, math.ceil(max(sum(m[k] for k, _ in BARS) for _, m in rows) / 4) * 4)
     out, step, ph = svg_frame([f"#{n}" for n, _ in rows], ymax, lambda v: f"{v:.0f}")
-    out += [hit(i, step, f"#{n}: " + ", ".join(f"{k} {m[k]}" for k, _ in BARS)) for i, (n, m) in enumerate(rows)]
+    out.insert(0, '<defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" '
+                  'patternTransform="rotate(45)"><path d="M0 0V6" class="hatch-line"/></pattern></defs>')
+    out += [hit(i, step, f"#{n}: " + ", ".join(f"{k} {m[k]}" for k, _ in BARS)
+                + f", misjudged {m['drift'] - m['adj_drift']}") for i, (n, m) in enumerate(rows)]
     bw = min(28, step * 0.6)
     for i, (n, m) in enumerate(rows):
         x, y = PL + step * (i + .5) - bw / 2, PT + ph
@@ -466,11 +476,16 @@ def bar_chart(rows):
             if h:
                 y -= h
                 out.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bw:.1f}" height="{h:.1f}" class="f-{cls}"/>')
-    return svg(out, "Plan items by verdict and unplanned files per plan")
+                mh = ph * m.get("mis_" + key, 0) / ymax  # hatch the misjudged part at the segment's bottom
+                if mh:
+                    out.append(f'<rect x="{x:.1f}" y="{y + h - mh:.1f}" width="{bw:.1f}" height="{mh:.1f}" '
+                               'class="f-hatch"/>')
+    return svg(out, "Plan items by verdict and unplanned files per plan; hatched = triaged as Jev misjudged")
 
 
 def line_chart(rows):
-    series = [[ratio(m["drift"], m["checks"]) for _, m in rows], [ratio(m["misjudged"], m["triaged"]) for _, m in rows]]
+    series = [[ratio(m["drift"], m["checks"]) for _, m in rows], [ratio(m["misjudged"], m["triaged"]) for _, m in rows],
+              [ratio(m["adj_drift"], m["checks"]) for _, m in rows]]
     top = max([r for s in series for r in s if r is not None] + [1])
     ymax = math.ceil(top)  # whole multiples of 100% keep ticks at round 25% steps
     out, step, ph = svg_frame([f"#{n}" for n, _ in rows], ymax, lambda v: f"{v:.0%}")
@@ -495,9 +510,9 @@ def legend(items):
 STATS_CSS = """
 :root{color-scheme:light;--page:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;
 --grid:#e1e0d9;--base:#c3c2b7;--good:#0ca30c;--warning:#fab219;--serious:#ec835a;--critical:#d03b3b;
---unplanned:#4a3aa7;--s1:#2a78d6;--s2:#eb6834}
+--unplanned:#4a3aa7;--s1:#2a78d6;--s2:#eb6834;--s3:#1a9e8f}
 @media (prefers-color-scheme:dark){:root{color-scheme:dark;--page:#0d0d0d;--surface:#1a1a19;--ink:#fff;
---ink2:#c3c2b7;--grid:#2c2c2a;--base:#383835;--unplanned:#9085e9;--s1:#3987e5;--s2:#d95926}}
+--ink2:#c3c2b7;--grid:#2c2c2a;--base:#383835;--unplanned:#9085e9;--s1:#3987e5;--s2:#d95926;--s3:#2bb5a4}}
 body{margin:0;background:var(--page);color:var(--ink);font:14px/1.5 system-ui,sans-serif}
 main{max-width:1120px;margin:0 auto;padding:24px 16px}
 h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:32px 0 8px}.sub{color:var(--ink2);margin:0}
@@ -511,7 +526,10 @@ polyline{fill:none;stroke-width:2}polyline,circle,rect[class^=f-]{pointer-events
 .f-good{fill:var(--good);background:var(--good)}.f-warning{fill:var(--warning);background:var(--warning)}
 .f-serious{fill:var(--serious);background:var(--serious)}.f-critical{fill:var(--critical);background:var(--critical)}
 .f-unplanned{fill:var(--unplanned);background:var(--unplanned)}.f-s1{background:var(--s1)}.f-s2{background:var(--s2)}
-.l-s1{stroke:var(--s1)}.l-s2{stroke:var(--s2)}.d-s1{fill:var(--s1)}.d-s2{fill:var(--s2)}
+.f-s3{background:var(--s3)}.l-s1{stroke:var(--s1)}.l-s2{stroke:var(--s2)}.l-s3{stroke:var(--s3)}
+.d-s1{fill:var(--s1)}.d-s2{fill:var(--s2)}.d-s3{fill:var(--s3)}
+.hatch-line{stroke:var(--surface);stroke-width:3}.f-hatch{fill:url(#hatch);
+background:repeating-linear-gradient(45deg,var(--surface) 0 2px,var(--muted) 2px 5px)}
 .legend{display:flex;flex-wrap:wrap;gap:4px 16px;color:var(--ink2);font-size:12px;margin-bottom:8px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
 .scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:13px}
@@ -525,29 +543,32 @@ def render_stats(plans):
     tot = {k: sum(m[k] for _, m in rows) for k in rows[0][1]} if rows else {}
     tiles = [("plans", len(rows)), ("plan items", tot.get("checks", 0)), ("drift detected", tot.get("drift", 0)),
              ("drift rate (drift / items)", pct(ratio(tot.get("drift", 0), tot.get("checks", 0)))),
+             ("adjusted drift rate ((drift − misjudged) / items)",
+              pct(ratio(tot.get("adj_drift", 0), tot.get("checks", 0)))),
              ("Jev misjudged rate", pct(ratio(tot.get("misjudged", 0), tot.get("triaged", 0)))
               + f' <span>({tot.get("misjudged", 0)}/{tot.get("triaged", 0)} triaged)</span>')]
     head = ["#", "plan approved", "session", "items", "OK", "PARTIAL", "MISSING", "CONTRADICTS", "unplanned",
-            "untouched", "drift rate", "unintended", "intentional", "misjudged"]
+            "untouched", "drift rate", "adj. drift rate", "unintended", "intentional", "misjudged"]
     body = []
     for (n, m), p in zip(rows, plans):
         when = datetime.fromisoformat(p["plan_id"]).astimezone().strftime("%Y-%m-%d %H:%M")
         cells = [n, when, (p["eval"].get("session_id") or "")[:8], m["checks"], m["OK"], m["PARTIAL"], m["MISSING"],
                  m["CONTRADICTS"], m["unplanned"], m["untouched"], pct(ratio(m["drift"], m["checks"])),
-                 m["unintended"], m["intentional"], m["misjudged"]]
+                 pct(ratio(m["adj_drift"], m["checks"])), m["unintended"], m["intentional"], m["misjudged"]]
         body.append("<tr>" + "".join(f"<td>{html.escape(str(c))}</td>" for c in cells) + "</tr>")
     recent = rows[-MAX_CHART_PLANS:]
     charts = "" if not rows else (
-        f'<h2>Drift per plan</h2><div class="card">{legend(BARS)}{bar_chart(recent)}</div>'
+        f'<h2>Drift per plan</h2><div class="card">{legend(BARS + [("misjudged (not drift)", "hatch")])}'
+        f'{bar_chart(recent)}</div>'
         f'<h2>Rates per plan</h2><div class="card">{legend(LINES)}{line_chart(recent)}</div>')
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Plan drift stats</title>
 <style>{STATS_CSS}</style></head><body><main>
 <h1>Plan drift stats</h1><p class="sub">{datetime.now().astimezone():%Y-%m-%d %H:%M} · latest check per plan ·
-drift = non-OK items + unplanned files · hover a column for values</p>
+drift = non-OK items + unplanned files · adjusted = drift minus items triaged misjudged · hover a column for values</p>
 <div class="tiles">{"".join(f'<div class="tile"><b>{v}</b><span>{k}</span></div>' for k, v in tiles)}</div>
 {charts}<h2>Plans</h2><div class="card scroll"><table><thead><tr>{"".join(f"<th>{h}</th>" for h in head)}</tr></thead>
-<tbody>{"".join(body) or '<tr><td colspan="14">no history yet</td></tr>'}</tbody></table></div>
+<tbody>{"".join(body) or '<tr><td colspan="15">no history yet</td></tr>'}</tbody></table></div>
 </main></body></html>
 """
 
@@ -563,9 +584,10 @@ def cmd_stats():
     with open(out, "w", encoding="utf-8") as f:
         f.write(render_stats(plans))
     ms = [plan_metrics(p) for p in plans]
-    tot = {k: sum(m[k] for m in ms) for k in ("checks", "drift", "misjudged", "triaged")}
+    tot = {k: sum(m[k] for m in ms) for k in ("checks", "drift", "adj_drift", "misjudged", "triaged")}
     print(f"plan-drift stats: {len(plans)} plan(s), {tot['checks']} item(s), {tot['drift']} drift detected "
-          f"(rate {pct(ratio(tot['drift'], tot['checks']))}), Jev misjudged {tot['misjudged']}/{tot['triaged']} "
+          f"(rate {pct(ratio(tot['drift'], tot['checks']))}, adjusted drift rate "
+          f"{pct(ratio(tot['adj_drift'], tot['checks']))}), Jev misjudged {tot['misjudged']}/{tot['triaged']} "
           f"triaged ({pct(ratio(tot['misjudged'], tot['triaged']))})")
     print(f"report: {out}")
 
