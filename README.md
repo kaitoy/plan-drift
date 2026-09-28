@@ -44,8 +44,8 @@ Requirements: Python 3.10+ (standard library only), git, and a TypeSafe API key.
 
 ```sh
 export TYPESAFE_API_KEY=sk-...        # https://console.typesafe.ai/keys
-claude plugin marketplace add kaitoy/cc-plan-drift   # or a local path
-claude plugin install plan-drift@cc-plan-drift
+claude plugin marketplace add kaitoy/claude-code-plugins
+claude plugin install plan-drift@kaitoy-claude-code-plugins
 ```
 
 To just try it locally, `claude --plugin-dir /path/to/cc-plan-drift` also works.
